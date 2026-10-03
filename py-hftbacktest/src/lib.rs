@@ -26,6 +26,7 @@ use hftbacktest::{
             PowerProbQueueFunc3,
             ProbQueueModel,
             RiskAdverseQueueModel,
+            TradeOnlyQueueModel,
             TradingQtyFeeModel,
             TradingValueFeeModel,
         },
@@ -83,6 +84,7 @@ pub enum LatencyModel {
 #[derive(Clone)]
 pub enum QueueModel {
     RiskAdverseQueueModel {},
+    TradeOnlyQueueModel {},
     PowerProbQueueModel { n: f64 },
     LogProbQueueModel {},
     LogProbQueueModel2 {},
@@ -331,6 +333,15 @@ impl BacktestAsset {
         slf
     }
 
+    /// Uses the strict `TradeOnlyQueueModel` for queue position estimation.
+    ///
+    /// Only same-price market trades advance the queue. Market-depth quantity decreases do not
+    /// improve queue position. This is intended for conservative fill-model parity audits.
+    pub fn trade_only_queue_model(mut slf: PyRefMut<Self>) -> PyRefMut<Self> {
+        slf.queue_model = QueueModel::TradeOnlyQueueModel {};
+        slf
+    }
+
     /// Uses the `LogProbQueueModel` for the queue position model.
     ///
     /// Please find the details below.
@@ -544,6 +555,7 @@ pub fn build_hashmap_backtest(assets: Vec<PyRefMut<BacktestAsset>>) -> PyResult<
             ],
             [
                 RiskAdverseQueueModel {},
+                TradeOnlyQueueModel {},
                 LogProbQueueModel {},
                 LogProbQueueModel2 {},
                 PowerProbQueueModel { n },
