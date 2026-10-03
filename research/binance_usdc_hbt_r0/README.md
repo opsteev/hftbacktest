@@ -104,20 +104,23 @@ python research/binance_usdc_hbt_r0/convert_yue_capture.py "$RAW" \
 As of 2026-10-03, Binance USDⓈ-M exchange information reports SOLUSDC price tick `0.01` and
 quantity step `0.01`. Use the captured/historical contract filters if they differ.
 
-Primary R0, 100 ms hysteresis:
+Run the complete strict R0 matrix in one command:
 
 ```bash
-python research/binance_usdc_hbt_r0/replay_frozen_orders.py \
+python research/binance_usdc_hbt_r0/run_r0_matrix.py \
   --input-dir "$HBT_DATA" \
-  --old-orders ../yue_maker/research/results/hbt_r0_old_r8_1/r8_1_orders_hysteresis_100ms.csv \
-  --output research/results/binance_usdc_hbt_r0/r8_1_100ms_trade_only \
+  --old-output-dir ../yue_maker/research/results/hbt_r0_old_r8_1 \
+  --output research/results/binance_usdc_hbt_r0/trade_only \
   --queue-model trade_only \
   --tick-size 0.01 \
   --lot-size 0.01
 ```
 
-Run the 50 ms and 250 ms frozen schedules the same way. Only after the strict R0 mismatch classes
-are understood should the same frozen schedule be replayed with stock HBT queue models:
+This runs the frozen 50/100/250 ms hysteresis schedules and writes
+`HBT_R0_PARITY_REPORT.md` plus the detailed per-order CSV/JSON outputs.
+
+For a single schedule, use `replay_frozen_orders.py` directly. Only after the strict R0 mismatch
+classes are understood should the same frozen schedules be replayed with stock HBT queue models:
 
 ```bash
 # HBT-R1 sensitivity, not parameter fitting
