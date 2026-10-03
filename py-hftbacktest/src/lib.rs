@@ -613,6 +613,7 @@ pub fn build_roivec_backtest(assets: Vec<PyRefMut<BacktestAsset>>) -> PyResult<u
             ],
             [
                 RiskAdverseQueueModel {},
+                TradeOnlyQueueModel {},
                 LogProbQueueModel {},
                 LogProbQueueModel2 {},
                 PowerProbQueueModel { n },
