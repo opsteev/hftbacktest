@@ -47,6 +47,30 @@ def render_report(
         f"- frozen legacy schedules: `{old_output_dir}`",
         "- clock: original integer recv_wall_ns used as both HBT exchange/local time",
         "",
+        "## Entry-book parity",
+        "",
+        "| cancel | price=BBO | queue exact | mean |queue delta| | max |queue delta| |",
+        "|---:|---:|---:|---:|---:|",
+    ]
+
+    for latency in LATENCIES_MS:
+        e = summaries[latency]["entry_book_parity"]
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    f"{latency}ms",
+                    pct(e["price_match_fraction"]),
+                    pct(e["queue_exact_fraction"]),
+                    num(e["queue_delta_mean_abs"]),
+                    num(e["queue_delta_max_abs"]),
+                ]
+            )
+            + " |"
+        )
+
+    lines += [
+        "",
         "## Fill-path parity",
         "",
         "| cancel | entries | old fill | HBT fill | agreement | fill Jaccard | old-only | HBT-only | matched | |Δfill time| mean ms | HBT depth-cross/other |",
