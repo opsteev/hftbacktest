@@ -95,6 +95,58 @@ where
     }
 }
 
+
+/// Provides a strict queue position model where only same-price market trades advance the queue.
+///
+/// Unlike [`RiskAdverseQueueModel`], market-depth quantity decreases do not improve the estimated
+/// queue position. This is useful for parity audits against conservative simulators that treat
+/// cancellations ahead as unobservable and therefore assign no queue-position credit to them.
+///
+/// Trade-through fills are still handled by the exchange model.
+pub struct TradeOnlyQueueModel<MD>(PhantomData<MD>);
+
+impl<MD> TradeOnlyQueueModel<MD> {
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<MD> QueueModel<MD> for TradeOnlyQueueModel<MD>
+where
+    MD: MarketDepth,
+{
+    fn new_order(&self, order: &mut Order, depth: &MD) {
+        let front_q_qty = if order.side == Side::Buy {
+            depth.bid_qty_at_tick(order.price_tick)
+        } else {
+            depth.ask_qty_at_tick(order.price_tick)
+        };
+        order.q = Box::new(front_q_qty);
+    }
+
+    fn trade(&self, order: &mut Order, qty: f64, _depth: &MD) {
+        let front_q_qty = order.q.as_any_mut().downcast_mut::<f64>().unwrap();
+        *front_q_qty -= qty;
+    }
+
+    fn depth(&self, _order: &mut Order, _prev_qty: f64, _new_qty: f64, _depth: &MD) {
+        // Intentionally ignore depth decreases. They may be cancellations either ahead of or
+        // behind our order, so this strict parity model never assumes they improve queue position.
+    }
+
+    fn is_filled(&self, order: &mut Order, depth: &MD) -> f64 {
+        let front_q_qty = order.q.as_any_mut().downcast_mut::<f64>().unwrap();
+        let exec = (-*front_q_qty / depth.lot_size()).round() as i64;
+        if exec > 0 {
+            *front_q_qty = 0.0;
+            (exec as f64) * depth.lot_size()
+        } else {
+            0.0
+        }
+    }
+}
+
 /// Stores the values needed for queue position estimation and adjustment for [`ProbQueueModel`].
 #[derive(Clone, Debug)]
 pub struct QueuePos {
