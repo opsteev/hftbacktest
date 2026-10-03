@@ -190,9 +190,9 @@ def convert(
                 #
                 # When the best moves away, clear through the new best first so stale better
                 # levels from the slower depth stream cannot remain as HBT's synthetic BBO.
-                if previous_book_bid is not None and bid < previous_book_bid:
+                if previous_book_bid is None or bid < previous_book_bid:
                     buf.append(DEPTH_CLEAR_EVENT | BUY_EVENT, recv_ns, bid, 0.0)
-                if previous_book_ask is not None and ask > previous_book_ask:
+                if previous_book_ask is None or ask > previous_book_ask:
                     buf.append(DEPTH_CLEAR_EVENT | SELL_EVENT, recv_ns, ask, 0.0)
                 buf.append(DEPTH_EVENT | BUY_EVENT, recv_ns, bid, bid_qty)
                 buf.append(DEPTH_EVENT | SELL_EVENT, recv_ns, ask, ask_qty)
