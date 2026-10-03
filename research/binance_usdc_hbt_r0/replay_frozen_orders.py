@@ -550,14 +550,33 @@ def replay(
             for r in rows
             if r[f"hbt_markout_{h}ms_bps"] is not None
         ]
+        matched_old_vals = [
+            float(r[f"old_markout_{h}ms_bps"])
+            for r in both_fill
+            if r[f"old_markout_{h}ms_bps"] is not None
+        ]
+        matched_hbt_vals = [
+            float(r[f"hbt_markout_{h}ms_bps"])
+            for r in both_fill
+            if r[f"hbt_markout_{h}ms_bps"] is not None
+        ]
         summary["markout_bps"][f"{h}ms"] = {
-            "old_n": len(old_vals),
-            "old_mean": mean(old_vals),
-            "hbt_n": len(hbt_vals),
-            "hbt_mean": mean(hbt_vals),
-            "delta_hbt_minus_old": (
+            "old_population_n": len(old_vals),
+            "old_population_mean": mean(old_vals),
+            "hbt_population_n": len(hbt_vals),
+            "hbt_population_mean": mean(hbt_vals),
+            "population_delta_hbt_minus_old": (
                 mean(hbt_vals) - mean(old_vals)
                 if hbt_vals and old_vals
+                else None
+            ),
+            "matched_both_fill_old_n": len(matched_old_vals),
+            "matched_both_fill_old_mean": mean(matched_old_vals),
+            "matched_both_fill_hbt_n": len(matched_hbt_vals),
+            "matched_both_fill_hbt_mean": mean(matched_hbt_vals),
+            "matched_both_fill_delta_hbt_minus_old": (
+                mean(matched_hbt_vals) - mean(matched_old_vals)
+                if matched_hbt_vals and matched_old_vals
                 else None
             ),
         }
