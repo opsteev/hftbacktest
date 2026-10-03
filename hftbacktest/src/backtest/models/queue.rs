@@ -1185,7 +1185,7 @@ where
 mod trade_only_tests {
     use super::{QueueModel, TradeOnlyQueueModel};
     use crate::{
-        depth::MarketDepth,
+        depth::L2MarketDepth,
         prelude::{HashMapMarketDepth, OrdType, Order, Side, Status, TimeInForce},
     };
 
