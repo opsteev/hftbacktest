@@ -404,6 +404,11 @@ def replay(
                 or fill_ns < q.old_cancel_effective_ns
             )
         )
+        hbt_terminal_ns = (
+            int(order.exch_timestamp)
+            if order is not None and not bool(order.cancellable)
+            else None
+        )
         row = {
             "order_id": q.order_id,
             "side": q.side,
@@ -425,6 +430,26 @@ def replay(
             "hbt_filled_while_legacy_cancel_pending": hbt_cancel_pending,
             "hbt_cancel_attempted": q.order_id in cancel_attempted,
             "hbt_terminal_status": hbt_status(order),
+            "old_time_to_fill_ms": (
+                (q.old_fill_ns - q.entry_ns) / 1e6
+                if q.old_fill_ns is not None
+                else None
+            ),
+            "hbt_time_to_fill_ms": (
+                (fill_ns - q.entry_ns) / 1e6
+                if fill_ns is not None
+                else None
+            ),
+            "old_order_lifetime_ms": (
+                (q.old_terminal_ns - q.entry_ns) / 1e6
+                if q.old_terminal_ns is not None
+                else None
+            ),
+            "hbt_order_lifetime_ms": (
+                (hbt_terminal_ns - q.entry_ns) / 1e6
+                if hbt_terminal_ns is not None
+                else None
+            ),
             "fill_time_delta_ms": (
                 (fill_ns - q.old_fill_ns) / 1e6
                 if fill_ns is not None and q.old_fill_ns is not None
@@ -464,11 +489,51 @@ def replay(
             ),
         }
 
-    inventory = 0
-    max_abs_inventory = 0
-    for _ts, side in sorted(hbt_fills):
-        inventory += 1 if side == "buy" else -1
-        max_abs_inventory = max(max_abs_inventory, abs(inventory))
+    old_fills = [
+        (q.old_fill_ns, q.side)
+        for q in quotes
+        if q.old_fill_ns is not None
+    ]
+
+    def inventory_path(fills: list[tuple[int, str]]) -> dict[str, int]:
+        inventory = 0
+        max_abs_inventory = 0
+        for _ts, side in sorted(fills):
+            inventory += 1 if side == "buy" else -1
+            max_abs_inventory = max(max_abs_inventory, abs(inventory))
+        return {
+            "terminal": inventory,
+            "max_abs": max_abs_inventory,
+        }
+
+    old_ttf = [
+        float(r["old_time_to_fill_ms"])
+        for r in rows
+        if r["old_time_to_fill_ms"] is not None
+    ]
+    hbt_ttf = [
+        float(r["hbt_time_to_fill_ms"])
+        for r in rows
+        if r["hbt_time_to_fill_ms"] is not None
+    ]
+    old_lifetime = [
+        float(r["old_order_lifetime_ms"])
+        for r in rows
+        if r["old_order_lifetime_ms"] is not None
+    ]
+    hbt_lifetime = [
+        float(r["hbt_order_lifetime_ms"])
+        for r in rows
+        if r["hbt_order_lifetime_ms"] is not None
+    ]
+    old_trade_through_count = sum(
+        r["old_filled"] and r["old_fill_reason"] == "trade_through"
+        for r in rows
+    )
+    hbt_trade_through_count = sum(
+        r["hbt_filled"] and r["hbt_fill_trigger"] == "trade_through"
+        for r in rows
+    )
 
     summary: dict[str, Any] = {
         "research": "HBT-R0_ENGINE_PARITY",
@@ -504,12 +569,42 @@ def replay(
                 else None
             ),
         },
+        "time_to_fill_ms": {
+            "old_n": len(old_ttf),
+            "old_mean": mean(old_ttf),
+            "old_median": median(old_ttf),
+            "hbt_n": len(hbt_ttf),
+            "hbt_mean": mean(hbt_ttf),
+            "hbt_median": median(hbt_ttf),
+        },
+        "order_lifetime_ms": {
+            "old_n": len(old_lifetime),
+            "old_mean": mean(old_lifetime),
+            "old_median": median(old_lifetime),
+            "hbt_n": len(hbt_lifetime),
+            "hbt_mean": mean(hbt_lifetime),
+            "hbt_median": median(hbt_lifetime),
+        },
         "matched_fill_time_delta_ms": {
             "n": len(fill_deltas),
             "mean": mean(fill_deltas),
             "median": median(fill_deltas),
             "mean_abs": mean([abs(x) for x in fill_deltas]),
             "max_abs": max([abs(x) for x in fill_deltas], default=None),
+        },
+        "trade_through": {
+            "old_count": old_trade_through_count,
+            "old_rate_among_fills": (
+                old_trade_through_count / sum(bool(r["old_filled"]) for r in rows)
+                if any(bool(r["old_filled"]) for r in rows)
+                else None
+            ),
+            "hbt_trade_count": hbt_trade_through_count,
+            "hbt_trade_rate_among_fills": (
+                hbt_trade_through_count / sum(bool(r["hbt_filled"]) for r in rows)
+                if any(bool(r["hbt_filled"]) for r in rows)
+                else None
+            ),
         },
         "hbt_fill_trigger_counts": {
             name: sum(r["hbt_fill_trigger"] == name for r in rows)
@@ -528,8 +623,8 @@ def replay(
             ),
         },
         "inventory_path_fill_units": {
-            "terminal": inventory,
-            "max_abs": max_abs_inventory,
+            "old": inventory_path(old_fills),
+            "hbt": inventory_path(hbt_fills),
         },
         "by_side": {
             "buy": side_summary("buy"),
