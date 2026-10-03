@@ -24,6 +24,7 @@ import zstandard as zstd
 from hftbacktest.data.validation import correct_event_order, validate_event_order
 from hftbacktest.types import (
     BUY_EVENT,
+    DEPTH_CLEAR_EVENT,
     DEPTH_EVENT,
     DEPTH_SNAPSHOT_EVENT,
     EXCH_EVENT,
@@ -150,6 +151,8 @@ def convert(
     agg_trades_seen = 0
     agg_trades_used = 0
     book_tickers_seen = 0
+    previous_book_bid: float | None = None
+    previous_book_ask: float | None = None
 
     for record in iter_records(raw_path):
         if record.get("kind") != "stream":
@@ -165,16 +168,36 @@ def convert(
         is_book = event == "bookTicker" or stream.endswith("@bookTicker")
         if is_book:
             book_tickers_seen += 1
+            try:
+                bid = float(data["b"])
+                bid_qty = float(data["B"])
+                ask = float(data["a"])
+                ask_qty = float(data["A"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if bid <= 0 or ask <= bid:
+                continue
+
             if recv_ns >= snapshot_recv_ns:
-                try:
-                    bid = float(data["b"])
-                    ask = float(data["a"])
-                except (KeyError, TypeError, ValueError):
-                    continue
-                if bid > 0 and ask > bid:
-                    bbo_ts.append(recv_ns)
-                    bbo_bid.append(bid)
-                    bbo_ask.append(ask)
+                bbo_ts.append(recv_ns)
+                bbo_bid.append(bid)
+                bbo_ask.append(ask)
+
+            if synced:
+                # R4 entries were created from bookTicker BBO, not from depth@100ms. Feed the
+                # same BBO into HftBacktest so an order scheduled at this recv_wall_ns sees the
+                # same best price and displayed best-level quantity as the legacy engine.
+                #
+                # When the best moves away, clear through the new best first so stale better
+                # levels from the slower depth stream cannot remain as HBT's synthetic BBO.
+                if previous_book_bid is not None and bid < previous_book_bid:
+                    buf.append(DEPTH_CLEAR_EVENT | BUY_EVENT, recv_ns, bid, 0.0)
+                if previous_book_ask is not None and ask > previous_book_ask:
+                    buf.append(DEPTH_CLEAR_EVENT | SELL_EVENT, recv_ns, ask, 0.0)
+                buf.append(DEPTH_EVENT | BUY_EVENT, recv_ns, bid, bid_qty)
+                buf.append(DEPTH_EVENT | SELL_EVENT, recv_ns, ask, ask_qty)
+                previous_book_bid = bid
+                previous_book_ask = ask
             continue
 
         if event == "depthUpdate":
