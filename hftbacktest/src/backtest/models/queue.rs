@@ -1182,6 +1182,69 @@ where
 }
 
 #[cfg(test)]
+mod trade_only_tests {
+    use super::{QueueModel, TradeOnlyQueueModel};
+    use crate::{
+        depth::MarketDepth,
+        prelude::{HashMapMarketDepth, OrdType, Order, Side, Status, TimeInForce},
+    };
+
+    fn buy_order() -> Order {
+        Order {
+            qty: 1.0,
+            leaves_qty: 1.0,
+            exec_qty: 0.0,
+            exec_price_tick: 0,
+            price_tick: 100,
+            tick_size: 1.0,
+            exch_timestamp: 0,
+            local_timestamp: 0,
+            order_id: 1,
+            q: Box::new(()),
+            maker: false,
+            order_type: OrdType::Limit,
+            req: Status::None,
+            status: Status::New,
+            side: Side::Buy,
+            time_in_force: TimeInForce::GTC,
+        }
+    }
+
+    #[test]
+    fn depth_decrease_does_not_advance_queue() {
+        let mut depth = HashMapMarketDepth::new(1.0, 1.0);
+        depth.update_bid_depth(100.0, 10.0, 0);
+
+        let qm = TradeOnlyQueueModel::new();
+        let mut order = buy_order();
+        qm.new_order(&mut order, &depth);
+
+        // A displayed quantity drop from 10 to 2 is deliberately ignored.
+        depth.update_bid_depth(100.0, 2.0, 1);
+        qm.depth(&mut order, 10.0, 2.0, &depth);
+
+        qm.trade(&mut order, 2.0, &depth);
+        assert_eq!(qm.is_filled(&mut order, &depth), 0.0);
+
+        qm.trade(&mut order, 8.0, &depth);
+        assert_eq!(qm.is_filled(&mut order, &depth), 1.0);
+    }
+
+    #[test]
+    fn exact_queue_depletion_matches_legacy_fill_threshold() {
+        let mut depth = HashMapMarketDepth::new(1.0, 1.0);
+        depth.update_bid_depth(100.0, 3.0, 0);
+
+        let qm = TradeOnlyQueueModel::new();
+        let mut order = buy_order();
+        qm.new_order(&mut order, &depth);
+
+        qm.trade(&mut order, 3.0, &depth);
+        assert_eq!(qm.is_filled(&mut order, &depth), 1.0);
+    }
+}
+
+#[cfg(test)]
 mod l3_tests {
     use crate::{
         backtest::{L3QueueModel, models::L3FIFOQueueModel},
