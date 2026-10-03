@@ -76,20 +76,51 @@ class FrozenQuote:
     initial_queue_ahead: float | None
     queue_percentile: float | None
 
-    def exposure_end_ns(self, quote_ttl_ms: int) -> int:
-        candidates = [
+    def hbt_cancel_ns(self, quote_ttl_ms: int) -> int:
+        """Return the HBT cancel timestamp that matches legacy event-boundary semantics.
+
+        Legacy apply_due() runs before each raw stream record. A positive-latency cancel is
+        therefore already effective for a market event whose recv_wall_ns equals
+        cancel_effective_ns. With zero HBT latency we submit it one nanosecond earlier, after all
+        events at that previous timestamp have been processed.
+
+        Legacy VirtualOrder.expired(now) is strict (now > expires_wall_ns), so a trade exactly at
+        expires_wall_ns can still fill. We therefore cancel one nanosecond after expiry.
+        """
+        expires_ns = (
             self.expires_ns
             if self.expires_ns is not None
             else self.entry_ns + quote_ttl_ms * 1_000_000
-        ]
+        )
+        candidates = [expires_ns + 1]
+
         if self.old_cancel_effective_ns is not None:
-            candidates.append(self.old_cancel_effective_ns)
+            effective = self.old_cancel_effective_ns
+            requested = self.old_cancel_requested_ns
+            if requested is not None and effective <= requested:
+                # 0ms legacy cancellation is scheduled during the triggering record and is only
+                # applied by apply_due() on the following record. +1ns preserves the triggering
+                # timestamp in the common unique-recv_wall_ns case.
+                candidates.append(effective + 1)
+            else:
+                candidates.append(effective - 1)
+
         if (
-            self.old_terminal_status in {"canceled", "expired", "censored"}
+            self.old_terminal_status == "canceled"
+            and self.old_cancel_effective_ns is None
             and self.old_terminal_ns is not None
         ):
-            candidates.append(self.old_terminal_ns)
-        return min(candidates)
+            candidates.append(self.old_terminal_ns - 1)
+        elif (
+            self.old_terminal_status == "censored"
+            and self.old_terminal_ns is not None
+        ):
+            candidates.append(self.old_terminal_ns + 1)
+
+        cancel_ns = min(candidates)
+        if cancel_ns <= self.entry_ns:
+            cancel_ns = self.entry_ns + 1
+        return cancel_ns
 
 
 def load_frozen_quotes(path: Path) -> list[FrozenQuote]:
@@ -298,7 +329,7 @@ def replay(
     actions: list[tuple[int, int, str, FrozenQuote]] = []
     for q in quotes:
         actions.append((q.entry_ns, 1, "entry", q))
-        actions.append((q.exposure_end_ns(quote_ttl_ms), 0, "cancel", q))
+        actions.append((q.hbt_cancel_ns(quote_ttl_ms), 0, "cancel", q))
     actions.sort(key=lambda x: (x[0], x[1], x[3].order_id))
 
     submitted: set[int] = set()
@@ -697,7 +728,7 @@ def replay(
         "markout_bps": {},
         "notes": [
             "This replays a frozen legacy quote schedule; it does not search for a new alpha.",
-            "HBT order latency is zero in R0. Legacy cancel exposure is reproduced by canceling at the legacy effective-cancel time.",
+            "HBT order latency is zero in R0. Positive-latency legacy cancels are submitted 1ns before cancel_effective_ns so apply_due-before-event semantics are preserved; expiry is canceled 1ns after expires_wall_ns because legacy expiry is strict now > expires.",
             "Each HBT quote quantity is one lot. TradeOnlyQueueModel declares a same-price fill when legacy queue-ahead reaches zero.",
             "HBT NoPartialFillExchange may additionally fill from opposite-best depth crossings; those fills are reported as depth_cross_or_book_update when no qualifying same-timestamp trade exists.",
             "Maker and taker fees are set to zero because R0 audits fill paths and markout, not PnL.",
