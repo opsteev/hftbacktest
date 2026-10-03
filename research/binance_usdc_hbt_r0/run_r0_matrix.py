@@ -120,15 +120,44 @@ def render_report(
 
     lines += [
         "",
+        "## Timing parity",
+        "",
+        "| cancel | old TTF mean ms | HBT TTF mean ms | old lifetime mean ms | HBT lifetime mean ms | old trade-through/fill | HBT trade-through/fill |",
+        "|---:|---:|---:|---:|---:|---:|---:|",
+    ]
+    for latency in LATENCIES_MS:
+        s = summaries[latency]
+        ttf = s["time_to_fill_ms"]
+        life = s["order_lifetime_ms"]
+        tt = s["trade_through"]
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    f"{latency}ms",
+                    num(ttf["old_mean"]),
+                    num(ttf["hbt_mean"]),
+                    num(life["old_mean"]),
+                    num(life["hbt_mean"]),
+                    pct(tt["old_rate_among_fills"]),
+                    pct(tt["hbt_trade_rate_among_fills"]),
+                ]
+            )
+            + " |"
+        )
+
+    lines += [
+        "",
         "## Inventory path in one-lot fill units",
         "",
-        "| cancel | terminal net fill units | max abs fill-unit inventory |",
-        "|---:|---:|---:|",
+        "| cancel | old terminal | HBT terminal | old max abs | HBT max abs |",
+        "|---:|---:|---:|---:|---:|",
     ]
     for latency in LATENCIES_MS:
         inv = summaries[latency]["inventory_path_fill_units"]
         lines.append(
-            f"| {latency}ms | {inv['terminal']} | {inv['max_abs']} |"
+            f"| {latency}ms | {inv['old']['terminal']} | {inv['hbt']['terminal']} | "
+            f"{inv['old']['max_abs']} | {inv['hbt']['max_abs']} |"
         )
 
     mismatch_total = sum(
