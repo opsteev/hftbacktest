@@ -63,6 +63,7 @@ class FrozenQuote:
     order_id: int
     side: str
     entry_ns: int
+    expires_ns: int | None
     price: float
     old_fill_ns: int | None
     old_fill_reason: str | None
@@ -76,7 +77,11 @@ class FrozenQuote:
     queue_percentile: float | None
 
     def exposure_end_ns(self, quote_ttl_ms: int) -> int:
-        candidates = [self.entry_ns + quote_ttl_ms * 1_000_000]
+        candidates = [
+            self.expires_ns
+            if self.expires_ns is not None
+            else self.entry_ns + quote_ttl_ms * 1_000_000
+        ]
         if self.old_cancel_effective_ns is not None:
             candidates.append(self.old_cancel_effective_ns)
         if (
@@ -101,6 +106,7 @@ def load_frozen_quotes(path: Path) -> list[FrozenQuote]:
                     order_id=int(row["order_id"]),
                     side=side,
                     entry_ns=exact_optional_int(row["entry_wall_ns"]) or 0,
+                    expires_ns=exact_optional_int(row.get("expires_wall_ns")),
                     price=float(row["entry_price"]),
                     old_fill_ns=exact_optional_int(row.get("fill_wall_ns")),
                     old_fill_reason=old_fill_reason,
