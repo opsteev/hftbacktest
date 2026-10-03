@@ -29,4 +29,5 @@ pub use queue::{
     QueueModel,
     QueuePos,
     RiskAdverseQueueModel,
+    TradeOnlyQueueModel,
 };
