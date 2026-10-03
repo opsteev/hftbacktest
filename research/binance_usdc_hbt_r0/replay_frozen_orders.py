@@ -303,6 +303,7 @@ def replay(
 
     submitted: set[int] = set()
     submit_status: dict[int, str] = {}
+    entry_diagnostics: dict[int, dict[str, Any]] = {}
     cancel_attempted: set[int] = set()
 
     def advance_to(target_ns: int) -> None:
@@ -328,6 +329,31 @@ def replay(
         if kind == "entry":
             if q.order_id in submitted:
                 raise RuntimeError(f"duplicate submit for {q.order_id}")
+
+            depth = hbt.depth(0)
+            price_tick = round(q.price / tick_size)
+            if q.side == "buy":
+                hbt_entry_best = float(depth.best_bid)
+                hbt_entry_best_qty = float(depth.best_bid_qty)
+                hbt_entry_level_qty = float(depth.bid_qty_at_tick(price_tick))
+            else:
+                hbt_entry_best = float(depth.best_ask)
+                hbt_entry_best_qty = float(depth.best_ask_qty)
+                hbt_entry_level_qty = float(depth.ask_qty_at_tick(price_tick))
+            entry_diagnostics[q.order_id] = {
+                "hbt_entry_best": hbt_entry_best,
+                "hbt_entry_best_qty": hbt_entry_best_qty,
+                "hbt_entry_level_qty": hbt_entry_level_qty,
+                "entry_price_matches_hbt_best": math.isclose(
+                    q.price, hbt_entry_best, rel_tol=1e-12, abs_tol=tick_size * 1e-9
+                ),
+                "entry_queue_delta": (
+                    hbt_entry_level_qty - q.initial_queue_ahead
+                    if q.initial_queue_ahead is not None
+                    else None
+                ),
+            }
+
             if q.side == "buy":
                 code = int(
                     hbt.submit_buy_order(
@@ -409,6 +435,7 @@ def replay(
             if order is not None and not bool(order.cancellable)
             else None
         )
+        diag = entry_diagnostics.get(q.order_id, {})
         row = {
             "order_id": q.order_id,
             "side": q.side,
@@ -416,6 +443,13 @@ def replay(
             "price": q.price,
             "initial_queue_ahead": q.initial_queue_ahead,
             "queue_percentile": q.queue_percentile,
+            "hbt_entry_best": diag.get("hbt_entry_best"),
+            "hbt_entry_best_qty": diag.get("hbt_entry_best_qty"),
+            "hbt_entry_level_qty": diag.get("hbt_entry_level_qty"),
+            "entry_price_matches_hbt_best": diag.get(
+                "entry_price_matches_hbt_best"
+            ),
+            "entry_queue_delta": diag.get("entry_queue_delta"),
             "old_filled": q.old_fill_ns is not None,
             "old_fill_ns": q.old_fill_ns,
             "old_fill_reason": q.old_fill_reason,
@@ -526,6 +560,16 @@ def replay(
         for r in rows
         if r["hbt_order_lifetime_ms"] is not None
     ]
+    entry_queue_deltas = [
+        float(r["entry_queue_delta"])
+        for r in rows
+        if r["entry_queue_delta"] is not None
+    ]
+    entry_price_matches = [
+        bool(r["entry_price_matches_hbt_best"])
+        for r in rows
+        if r["entry_price_matches_hbt_best"] is not None
+    ]
     old_trade_through_count = sum(
         r["old_filled"] and r["old_fill_reason"] == "trade_through"
         for r in rows
@@ -555,6 +599,26 @@ def replay(
             sum(bool(r["hbt_filled"]) for r in rows) / len(rows)
             if rows else None
         ),
+        "entry_book_parity": {
+            "price_match_n": len(entry_price_matches),
+            "price_match_fraction": (
+                sum(entry_price_matches) / len(entry_price_matches)
+                if entry_price_matches
+                else None
+            ),
+            "queue_delta_n": len(entry_queue_deltas),
+            "queue_delta_mean": mean(entry_queue_deltas),
+            "queue_delta_mean_abs": mean([abs(x) for x in entry_queue_deltas]),
+            "queue_delta_max_abs": max(
+                [abs(x) for x in entry_queue_deltas], default=None
+            ),
+            "queue_exact_fraction": (
+                sum(abs(x) <= max(1e-12, lot_size * 1e-9) for x in entry_queue_deltas)
+                / len(entry_queue_deltas)
+                if entry_queue_deltas
+                else None
+            ),
+        },
         "fill_path_confusion": {
             "both_fill": len(both_fill),
             "old_only": len(old_only),
