@@ -49,7 +49,7 @@ def render_report(
         "",
         "## Entry-book parity",
         "",
-        "| cancel | price=BBO | queue exact | mean |queue delta| | max |queue delta| |",
+        "| cancel | price=BBO | queue exact | mean abs queue delta | max abs queue delta |",
         "|---:|---:|---:|---:|---:|",
     ]
 
