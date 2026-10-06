@@ -9,3 +9,6 @@ docs/_build
 **/target
 **/tmp_*
 **/*.so
+.venv/
+**/.venv/
+research/results/
