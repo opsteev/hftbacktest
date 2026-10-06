@@ -2,8 +2,6 @@ import argparse
 from pathlib import Path
 
 import numpy as np
-from numba import njit
-
 from hftbacktest import (
     BacktestAsset,
     HashMapMarketDepthBacktest,
@@ -107,12 +105,16 @@ def build_reference(local_events):
     )
 
 
-@njit
 def replay_hbt(hbt, expected_ts):
     """
     HBT advances wait_next_feed() by local feed timestamp groups, not by
-    individual event rows. The first local group is already loaded when the
-    backtester is constructed, so capture that initial state before waiting.
+    individual event rows.
+
+    At construction current_timestamp is i64::MAX. The first wait_next_feed()
+    call initializes the event set and processes the first local timestamp
+    group. At end-of-data, HBT can process the final local group and return
+    EndOfData directly, so the final processed group's timestamp is recovered
+    from feed_latency().
     """
     n = len(expected_ts)
 
@@ -128,19 +130,7 @@ def replay_hbt(hbt, expected_ts):
     timestamp_jump = 0
     jump_expected = 0
     jump_actual = 0
-
-    # HBT initializes the first local-visible feed group before the first
-    # wait_next_feed() call.
-    if n > 0 and hbt.current_timestamp == expected_ts[0]:
-        depth = hbt.depth(0)
-
-        actual_ts[0] = hbt.current_timestamp
-        actual_bid[0] = depth.best_bid
-        actual_bid_qty[0] = depth.best_bid_qty
-        actual_ask[0] = depth.best_ask
-        actual_ask_qty[0] = depth.best_ask_qty
-
-        cp = 1
+    eod_final_capture = 0
 
     timeout = 60_000_000_000
 
@@ -149,6 +139,26 @@ def replay_hbt(hbt, expected_ts):
         last_rc = rc
 
         if rc == 1:
+            # HBT's goto() returns EndOfData directly when the event set
+            # becomes empty. If the final local timestamp group was processed
+            # immediately before that, the MarketFeed result is not surfaced
+            # as rc=2. Recover that final observation from Local.feed_latency,
+            # which is updated for every processed local feed event.
+            if cp == n - 1:
+                latency = hbt.feed_latency(0)
+                if latency is not None:
+                    final_local_ts = int(latency[1])
+                    if final_local_ts == int(expected_ts[cp]):
+                        depth = hbt.depth(0)
+
+                        actual_ts[cp] = final_local_ts
+                        actual_bid[cp] = depth.best_bid
+                        actual_bid_qty[cp] = depth.best_bid_qty
+                        actual_ask[cp] = depth.best_ask
+                        actual_ask_qty[cp] = depth.best_ask_qty
+
+                        cp += 1
+                        eod_final_capture = 1
             break
 
         if rc == 0:
@@ -188,6 +198,7 @@ def replay_hbt(hbt, expected_ts):
         timestamp_jump,
         jump_expected,
         jump_actual,
+        eod_final_capture,
         actual_ts,
         actual_bid,
         actual_bid_qty,
@@ -250,6 +261,7 @@ def main():
             timestamp_jump,
             jump_expected,
             jump_actual,
+            eod_final_capture,
             actual_ts,
             actual_bid,
             actual_bid_qty,
@@ -266,6 +278,7 @@ def main():
     print(f"checkpoints_expected={len(expected_ts)}")
     print(f"checkpoints_completed={completed}")
     print(f"wait_next_feed_calls_with_market_feed={feed_count}")
+    print(f"eod_final_group_captured={eod_final_capture}")
     print(f"last_rc={last_rc}")
 
     if timestamp_jump:
