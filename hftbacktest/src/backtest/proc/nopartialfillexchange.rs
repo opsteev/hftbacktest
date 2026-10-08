@@ -61,7 +61,7 @@ use crate::{
 /// best. Be aware that this may cause unrealistic fill simulations if you attempt to execute a
 /// large quantity.
 ///
-pub struct NoPartialFillExchange<AT, LM, QM, MD, FM, const BOOK_CROSS_FILL: bool = true>
+pub struct NoPartialFillExchangeMode<AT, LM, QM, MD, FM, const BOOK_CROSS_FILL: bool>
 where
     AT: AssetType,
     LM: LatencyModel,
@@ -88,11 +88,16 @@ where
 /// (including cancel/quantity changes), but never by themselves fill
 /// resting orders. Trades at or through the resting order price can fill.
 /// This is a research model, not an exchange reality guarantee.
+/// Backwards-compatible native exchange model. Resolves the bool const
+/// parameter at the type level so existing ::new() calls stay inferrable.
+pub type NoPartialFillExchange<AT, LM, QM, MD, FM> =
+    NoPartialFillExchangeMode<AT, LM, QM, MD, FM, true>;
+
 pub type YueStrictNoPartialFillExchange<AT, LM, QM, MD, FM> =
-    NoPartialFillExchange<AT, LM, QM, MD, FM, false>;
+    NoPartialFillExchangeMode<AT, LM, QM, MD, FM, false>;
 
 impl<AT, LM, QM, MD, FM, const BOOK_CROSS_FILL: bool>
-    NoPartialFillExchange<AT, LM, QM, MD, FM, BOOK_CROSS_FILL>
+    NoPartialFillExchangeMode<AT, LM, QM, MD, FM, BOOK_CROSS_FILL>
 where
     AT: AssetType,
     LM: LatencyModel,
@@ -523,7 +528,7 @@ where
 }
 
 impl<AT, LM, QM, MD, FM, const BOOK_CROSS_FILL: bool> Processor
-    for NoPartialFillExchange<AT, LM, QM, MD, FM, BOOK_CROSS_FILL>
+    for NoPartialFillExchangeMode<AT, LM, QM, MD, FM, BOOK_CROSS_FILL>
 where
     AT: AssetType,
     LM: LatencyModel,
