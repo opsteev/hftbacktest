@@ -220,7 +220,7 @@ def advance_to_timestamp(hbt, target_ts):
             )
 
 
-def run_native(npz, fixture, qty, tick_size, lot_size, queue_model):
+def run_native(npz, fixture, qty, tick_size, lot_size, queue_model, exchange_model="native"):
     asset = (
         BacktestAsset()
         .data(str(npz))
@@ -234,9 +234,15 @@ def run_native(npz, fixture, qty, tick_size, lot_size, queue_model):
     else:
         raise ValueError(queue_model)
 
+    if exchange_model == "native":
+        asset = asset.no_partial_fill_exchange()
+    elif exchange_model == "trade_only":
+        asset = asset.yue_strict_trade_only_exchange()
+    else:
+        raise ValueError(exchange_model)
+
     asset = (
         asset
-        .no_partial_fill_exchange()
         .trading_value_fee_model(0.0, 0.0)
         .tick_size(tick_size)
         .lot_size(lot_size)
