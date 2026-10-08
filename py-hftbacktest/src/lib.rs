@@ -37,6 +37,7 @@ use hftbacktest::{
             Local,
             LocalProcessor,
             NoPartialFillExchange,
+            YueStrictNoPartialFillExchange,
             PartialFillExchange,
             Processor,
         },
@@ -96,6 +97,7 @@ pub enum QueueModel {
 #[derive(Clone)]
 pub enum ExchangeKind {
     NoPartialFillExchange {},
+    YueStrictNoPartialFillExchange {},
     PartialFillExchange {},
 }
 
@@ -451,6 +453,14 @@ impl BacktestAsset {
         slf
     }
 
+    /// Research-only maker fill model. Depth changes do NOT fill resting
+    /// orders; only matched aggressive trades at/through price can fill.
+    /// Queue advancement still depends on the configured queue model.
+    pub fn yue_strict_trade_only_exchange(mut slf: PyRefMut<Self>) -> PyRefMut<Self> {
+        slf.exch_kind = ExchangeKind::YueStrictNoPartialFillExchange {};
+        slf
+    }
+
     /// Uses the `PartiallFillExchange <https://docs.rs/hftbacktest/latest/hftbacktest/backtest/proc/struct.PartialFillExchange.html>`_
     /// for the exchange model.
     pub fn partial_fill_exchange(mut slf: PyRefMut<Self>) -> PyRefMut<Self> {
@@ -565,7 +575,7 @@ pub fn build_hashmap_backtest(assets: Vec<PyRefMut<BacktestAsset>>) -> PyResult<
                 PowerProbQueueModel3 { n },
                 L3FIFOQueueModel {}
             ],
-            [NoPartialFillExchange {}, PartialFillExchange {}],
+            [NoPartialFillExchange {}, YueStrictNoPartialFillExchange {}, PartialFillExchange {}],
             [
                 TradingValueFeeModel { fees },
                 TradingQtyFeeModel { fees },
@@ -623,7 +633,7 @@ pub fn build_roivec_backtest(assets: Vec<PyRefMut<BacktestAsset>>) -> PyResult<u
                 PowerProbQueueModel3 { n },
                 L3FIFOQueueModel {}
             ],
-            [NoPartialFillExchange {}, PartialFillExchange {}],
+            [NoPartialFillExchange {}, YueStrictNoPartialFillExchange {}, PartialFillExchange {}],
             [
                 TradingValueFeeModel { fees },
                 TradingQtyFeeModel { fees },
