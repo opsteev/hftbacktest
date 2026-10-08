@@ -61,7 +61,7 @@ use crate::{
 /// best. Be aware that this may cause unrealistic fill simulations if you attempt to execute a
 /// large quantity.
 ///
-pub struct NoPartialFillExchange<AT, LM, QM, MD, FM>
+pub struct NoPartialFillExchange<AT, LM, QM, MD, FM, const BOOK_CROSS_FILL: bool = true>
 where
     AT: AssetType,
     LM: LatencyModel,
@@ -84,7 +84,15 @@ where
     filled_orders: Vec<OrderId>,
 }
 
-impl<AT, LM, QM, MD, FM> NoPartialFillExchange<AT, LM, QM, MD, FM>
+/// Trade-only maker fill semantics: depth updates still maintain the book
+/// (including cancel/quantity changes), but never by themselves fill
+/// resting orders. Trades at or through the resting order price can fill.
+/// This is a research model, not an exchange reality guarantee.
+pub type YueStrictNoPartialFillExchange<AT, LM, QM, MD, FM> =
+    NoPartialFillExchange<AT, LM, QM, MD, FM, false>;
+
+impl<AT, LM, QM, MD, FM, const BOOK_CROSS_FILL: bool>
+    NoPartialFillExchange<AT, LM, QM, MD, FM, BOOK_CROSS_FILL>
 where
     AT: AssetType,
     LM: LatencyModel,
@@ -514,7 +522,8 @@ where
     }
 }
 
-impl<AT, LM, QM, MD, FM> Processor for NoPartialFillExchange<AT, LM, QM, MD, FM>
+impl<AT, LM, QM, MD, FM, const BOOK_CROSS_FILL: bool> Processor
+    for NoPartialFillExchange<AT, LM, QM, MD, FM, BOOK_CROSS_FILL>
 where
     AT: AssetType,
     LM: LatencyModel,
@@ -538,7 +547,7 @@ where
                 self.depth
                     .update_bid_depth(event.px, event.qty, event.exch_ts);
             self.on_bid_qty_chg(price_tick, prev_qty, new_qty);
-            if best_bid_tick > prev_best_bid_tick {
+            if BOOK_CROSS_FILL && best_bid_tick > prev_best_bid_tick {
                 self.on_best_bid_update(prev_best_bid_tick, best_bid_tick, timestamp)?;
             }
         } else if event.is(EXCH_ASK_DEPTH_EVENT) || event.is(EXCH_ASK_DEPTH_SNAPSHOT_EVENT) {
@@ -546,7 +555,7 @@ where
                 self.depth
                     .update_ask_depth(event.px, event.qty, event.exch_ts);
             self.on_ask_qty_chg(price_tick, prev_qty, new_qty);
-            if best_ask_tick < prev_best_ask_tick {
+            if BOOK_CROSS_FILL && best_ask_tick < prev_best_ask_tick {
                 self.on_best_ask_update(prev_best_ask_tick, best_ask_tick, timestamp)?;
             }
         } else if event.is(EXCH_BUY_TRADE_EVENT) {
@@ -555,7 +564,8 @@ where
             {
                 let orders = self.orders.clone();
                 let mut orders_borrowed = orders.borrow_mut();
-                if self.depth.best_bid_tick() == INVALID_MIN
+                if !BOOK_CROSS_FILL
+                    || self.depth.best_bid_tick() == INVALID_MIN
                     || (orders_borrowed.len() as i64) < price_tick - self.depth.best_bid_tick()
                 {
                     for (_, order) in orders_borrowed.iter_mut() {
@@ -581,7 +591,8 @@ where
             {
                 let orders = self.orders.clone();
                 let mut orders_borrowed = orders.borrow_mut();
-                if self.depth.best_ask_tick() == INVALID_MAX
+                if !BOOK_CROSS_FILL
+                    || self.depth.best_ask_tick() == INVALID_MAX
                     || (orders_borrowed.len() as i64) < self.depth.best_ask_tick() - price_tick
                 {
                     for (_, order) in orders_borrowed.iter_mut() {
