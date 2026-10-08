@@ -485,15 +485,20 @@ def main():
 
     n_buy = counts["side_BUY"]
     n_sell = counts["side_SELL"]
-    n_terminal_nonfill = (
-        counts["expected_CANCELED"] + counts["expected_EXPIRED"]
-    )
+    n_fill = counts["expected_FILLED"]
+    n_cancel = counts["expected_CANCELED"]
+    n_post_only_expired = counts["expected_EXPIRED"]
 
-    coverage_ok = n_buy > 0 and n_sell > 0 and n_terminal_nonfill > 0
+    coverage_ok = (
+        n_buy > 0 and n_sell > 0
+        and n_fill > 0 and n_cancel > 0
+    )
     parity_ok = not mismatches
     print()
     print("BOTH_SIDES_COVERED=" + str(n_buy > 0 and n_sell > 0))
-    print("NONFILL_PATH_COVERED=" + str(n_terminal_nonfill > 0))
+    print("FILL_PATH_COVERED=" + str(n_fill > 0))
+    print("CANCELLATION_PATH_COVERED=" + str(n_cancel > 0))
+    print("POST_ONLY_EXPIRE_PATH_COVERED=" + str(n_post_only_expired > 0))
     print("BATCH_PARITY_STATUS=" + (
         "PASS" if parity_ok and coverage_ok else "FAIL"
     ))
