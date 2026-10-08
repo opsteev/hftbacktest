@@ -26,6 +26,7 @@ use hftbacktest::{
             PowerProbQueueFunc3,
             ProbQueueModel,
             RiskAdverseQueueModel,
+            YueStrictQueueModel,
             TradingQtyFeeModel,
             TradingValueFeeModel,
         },
@@ -83,6 +84,7 @@ pub enum LatencyModel {
 #[derive(Clone)]
 pub enum QueueModel {
     RiskAdverseQueueModel {},
+    YueStrictQueueModel {},
     PowerProbQueueModel { n: f64 },
     LogProbQueueModel {},
     LogProbQueueModel2 {},
@@ -331,6 +333,17 @@ impl BacktestAsset {
         slf
     }
 
+    /// Research-only conservative queue semantics from yue_maker.
+    ///
+    /// Public depth shrinkage never improves queue position. Only trades
+    /// at the resting order price consume the initial displayed queue.
+    ///
+    /// Exchange-level book-cross fills are not disabled by this model.
+    pub fn yue_strict_queue_model(mut slf: PyRefMut<Self>) -> PyRefMut<Self> {
+        slf.queue_model = QueueModel::YueStrictQueueModel {};
+        slf
+    }
+
     /// Uses the `LogProbQueueModel` for the queue position model.
     ///
     /// Please find the details below.
@@ -544,6 +557,7 @@ pub fn build_hashmap_backtest(assets: Vec<PyRefMut<BacktestAsset>>) -> PyResult<
             ],
             [
                 RiskAdverseQueueModel {},
+                YueStrictQueueModel {},
                 LogProbQueueModel {},
                 LogProbQueueModel2 {},
                 PowerProbQueueModel { n },
@@ -601,6 +615,7 @@ pub fn build_roivec_backtest(assets: Vec<PyRefMut<BacktestAsset>>) -> PyResult<u
             ],
             [
                 RiskAdverseQueueModel {},
+                YueStrictQueueModel {},
                 LogProbQueueModel {},
                 LogProbQueueModel2 {},
                 PowerProbQueueModel { n },
