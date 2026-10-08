@@ -95,6 +95,61 @@ where
     }
 }
 
+/// Queue model matching the historical yue_maker conservative virtual-fill queue rule.
+///
+/// It begins behind the full displayed quantity at the order's price.
+/// Only matching aggressive trades advance this queue estimate: cancellations
+/// and absolute public depth reductions NEVER advance the order.
+///
+/// When the sum of same-price aggressive trade quantities consumes the full
+/// queue ahead (including equality), the order becomes fillable.
+///
+/// NOTE: the selected exchange model can STILL fill on order-book best-price
+/// crossings, separately from this queue model. Thus selecting this model
+/// alone does not reproduce the complete yue_maker virtual-fill semantics.
+pub struct YueStrictQueueModel<MD>(PhantomData<MD>);
+
+impl<MD> YueStrictQueueModel<MD> {
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<MD> QueueModel<MD> for YueStrictQueueModel<MD>
+where
+    MD: MarketDepth,
+{
+    fn new_order(&self, order: &mut Order, depth: &MD) {
+        let front_q_qty = if order.side == Side::Buy {
+            depth.bid_qty_at_tick(order.price_tick)
+        } else {
+            depth.ask_qty_at_tick(order.price_tick)
+        };
+        order.q = Box::new(front_q_qty);
+    }
+
+    fn trade(&self, order: &mut Order, qty: f64, _depth: &MD) {
+        let front_q_qty = order.q.as_any_mut().downcast_mut::<f64>().unwrap();
+        *front_q_qty -= qty;
+    }
+
+    fn depth(&self, _order: &mut Order, _prev_qty: f64, _new_qty: f64, _depth: &MD) {
+        // Deliberately ignore all depth-level quantity changes.
+    }
+
+    fn is_filled(&self, order: &mut Order, depth: &MD) -> f64 {
+        let front_q_qty = order.q.as_any_mut().downcast_mut::<f64>().unwrap();
+        if *front_q_qty <= 0.0 {
+            // A positive signal is sufficient for NoPartialFillExchange to
+            // execute the entire order. The equality case is intentional.
+            depth.lot_size()
+        } else {
+            0.0
+        }
+    }
+}
+
 /// Stores the values needed for queue position estimation and adjustment for [`ProbQueueModel`].
 #[derive(Clone, Debug)]
 pub struct QueuePos {
