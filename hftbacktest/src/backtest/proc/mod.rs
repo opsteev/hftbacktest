@@ -5,7 +5,7 @@ mod partialfillexchange;
 use std::collections::HashMap;
 
 pub use local::Local;
-pub use nopartialfillexchange::NoPartialFillExchange;
+pub use nopartialfillexchange::{NoPartialFillExchange, YueStrictNoPartialFillExchange};
 pub use partialfillexchange::PartialFillExchange;
 
 mod l3_local;
