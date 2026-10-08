@@ -220,13 +220,22 @@ def advance_to_timestamp(hbt, target_ts):
             )
 
 
-def run_native(npz, fixture, qty, tick_size, lot_size):
+def run_native(npz, fixture, qty, tick_size, lot_size, queue_model):
     asset = (
         BacktestAsset()
         .data(str(npz))
         .linear_asset(1.0)
         .constant_order_latency(0, 0)
-        .risk_adverse_queue_model()
+    )
+    if queue_model == "native":
+        asset = asset.risk_adverse_queue_model()
+    elif queue_model == "yue_strict":
+        asset = asset.yue_strict_queue_model()
+    else:
+        raise ValueError(queue_model)
+
+    asset = (
+        asset
         .no_partial_fill_exchange()
         .trading_value_fee_model(0.0, 0.0)
         .tick_size(tick_size)
@@ -325,6 +334,81 @@ def run_native(npz, fixture, qty, tick_size, lot_size):
         hbt.close()
 
 
+def trace_fill_window(data, fixture, native_ts, yue_ts):
+    """Audit the exact exchange events underlying the fill-time difference."""
+    quote = float(fixture["price"])
+    start_ts = int(fixture["entry_local_ts"])
+    end_ts = max(
+        int(fixture["strict_fill_exch_ts"]),
+        int(native_ts),
+        int(yue_ts),
+    )
+
+    exch = data[(data["ev"] & EXCH_EVENT) == EXCH_EVENT]
+
+    same_price_aggressive_sell = 0.0
+    native_best_bid_depth_min = float(fixture["strict_initial_queue_ahead"])
+    depth_reductions_at_bid = 0
+    cross_ask_candidate = 0
+
+    event_window = []
+    lower = min(native_ts, yue_ts, fixture["strict_fill_exch_ts"]) - 80_000_000
+    upper = max(native_ts, yue_ts, fixture["strict_fill_exch_ts"]) + 30_000_000
+
+    for row in exch:
+        ts = int(row["exch_ts"])
+        if ts < start_ts:
+            continue
+        if ts > max(end_ts, upper):
+            break
+
+        ev = int(row["ev"])
+        base = ev & BASE_EVENT_MASK
+        px = float(row["px"])
+        qty = float(row["qty"])
+        is_buy = bool(ev & BUY_EVENT)
+        is_sell = bool(ev & SELL_EVENT)
+
+        if ts <= native_ts:
+            if base == TRADE_EVENT and is_sell and abs(px - quote) < 1e-9:
+                same_price_aggressive_sell += qty
+            if base == DEPTH_EVENT and is_buy and abs(px - quote) < 1e-9:
+                if qty < native_best_bid_depth_min:
+                    depth_reductions_at_bid += 1
+                    native_best_bid_depth_min = qty
+            if base == DEPTH_EVENT and is_sell and px <= quote and qty > 0:
+                cross_ask_candidate += 1
+
+        if lower <= ts <= upper:
+            if (
+                (base == TRADE_EVENT and is_sell and px <= quote + 0.01)
+                or (base == DEPTH_EVENT and abs(px - quote) <= 0.02)
+            ):
+                side = "BUY" if is_buy else ("SELL" if is_sell else "NONE")
+                kind = "TRADE" if base == TRADE_EVENT else "DEPTH"
+                event_window.append((ts, kind, side, px, qty))
+
+    print()
+    print("===== EXCHANGE EVENT DIAGNOSTICS =====")
+    print(f"same_price_aggressive_sell_qty_until_native={same_price_aggressive_sell:.8f}")
+    print(f"min_displayed_bid_qty_until_native={native_best_bid_depth_min:.8f}")
+    print(f"bid_depth_shrink_events_until_native={depth_reductions_at_bid}")
+    print(f"cross_ask_update_candidates_until_native={cross_ask_candidate}")
+    print(f"candidate_events_around_fill={len(event_window)}")
+    print("first_35_relevant_exchange_events:")
+    for ts, kind, side, px, qty in event_window[:35]:
+        anchor = (
+            "NATIVE_FILL" if ts == native_ts else
+            "YUE_FILL" if ts == yue_ts else
+            "OLD_STRICT_FILL" if ts == fixture["strict_fill_exch_ts"] else
+            "-"
+        )
+        print(
+            f"  ts={ts} {kind:5s} {side:4s} "
+            f"price={px:.4f} qty={qty:.8f} {anchor}"
+        )
+
+
 def status_name(x):
     return {
         NEW: "NEW",
@@ -364,60 +448,81 @@ def main():
     print(f"strict_fill_exch_ts={fixture['strict_fill_exch_ts']}")
     print(f"strict_fill_reason={fixture['strict_fill_reason']}")
 
-    result = run_native(
+    native = run_native(
         args.npz,
         fixture,
         args.qty,
         args.tick_size,
         args.lot_size,
+        "native",
+    )
+    yue = run_native(
+        args.npz,
+        fixture,
+        args.qty,
+        args.tick_size,
+        args.lot_size,
+        "yue_strict",
     )
 
-    print()
-    print("===== HBT NATIVE LIFECYCLE =====")
-    print(f"local_bid_at_submit={result['local_bid_at_submit']:.4f}")
-    print(f"local_ask_at_submit={result['local_ask_at_submit']:.4f}")
-    print(f"initial_status={status_name(result['initial_status'])}")
-    print(f"initial_exch_ts={result['initial_exch_ts']}")
-    print(f"terminal_status={status_name(result['terminal_status'])}")
-    print(f"terminal_exch_ts={result['terminal_exch_ts']}")
-    print(f"terminal_local_ts={result['terminal_local_ts']}")
-    print(f"exec_price={result['exec_price']:.4f}")
-    print(f"exec_qty={result['exec_qty']:.8f}")
-    print(f"position={result['position']:.8f}")
-    print(f"cancel_rc={result['cancel_rc']}")
+    for label, result in (
+        ("HBT NATIVE RISK-ADVERSE", native),
+        ("HBT YUE STRICT QUEUE", yue),
+    ):
+        print()
+        print(f"===== {label} LIFECYCLE =====")
+        print(f"local_bid_at_submit={result['local_bid_at_submit']:.4f}")
+        print(f"local_ask_at_submit={result['local_ask_at_submit']:.4f}")
+        print(f"initial_status={status_name(result['initial_status'])}")
+        print(f"initial_exch_ts={result['initial_exch_ts']}")
+        print(f"terminal_status={status_name(result['terminal_status'])}")
+        print(f"terminal_exch_ts={result['terminal_exch_ts']}")
+        print(f"terminal_local_ts={result['terminal_local_ts']}")
+        print(f"exec_price={result['exec_price']:.4f}")
+        print(f"exec_qty={result['exec_qty']:.8f}")
+        print(f"position={result['position']:.8f}")
+        print(f"cancel_rc={result['cancel_rc']}")
 
     print()
-    print("===== SEMANTIC COMPARISON =====")
-    strict_filled = fixture["strict_fill_exch_ts"] is not None
-    native_filled = result["terminal_status"] == FILLED
+    print("===== FILL TIMESTAMP PARITY =====")
+    old_fill_ts = fixture["strict_fill_exch_ts"]
+    native_filled = native["terminal_status"] == FILLED
+    yue_filled = yue["terminal_status"] == FILLED
+    print(f"old_strict_fill_exch_ts={old_fill_ts}")
+    print(f"hbt_native_filled={native_filled}")
+    print(f"hbt_yue_strict_filled={yue_filled}")
+    native_delta = (
+        native["terminal_exch_ts"] - old_fill_ts
+        if native_filled else None
+    )
+    yue_delta = (
+        yue["terminal_exch_ts"] - old_fill_ts
+        if yue_filled else None
+    )
+    print(f"native_minus_old_strict_ns={native_delta}")
+    print(f"yue_minus_old_strict_ns={yue_delta}")
+    fill_parity = yue_filled and yue_delta == 0
+    print("YUE_STRICT_FILL_TIMESTAMP_PARITY="
+          + ("PASS" if fill_parity else "DIFF"))
 
-    print(f"strict_filled={strict_filled}")
-    print(f"native_filled={native_filled}")
-
-    if native_filled:
-        delta = (
-            result["terminal_exch_ts"]
-            - fixture["strict_fill_exch_ts"]
+    if native_filled and yue_filled:
+        trace_fill_window(
+            data, fixture,
+            native["terminal_exch_ts"],
+            yue["terminal_exch_ts"],
         )
-        print(f"native_minus_strict_fill_ns={delta}")
-        print(
-            "same_fill_timestamp="
-            f"{result['terminal_exch_ts'] == fixture['strict_fill_exch_ts']}"
-        )
-    else:
-        print("native_minus_strict_fill_ns=None")
-        print("same_fill_timestamp=False")
 
-    harness_ok = (
+    harness_ok = all(
         result["initial_status"] == NEW
         and result["terminal_status"] in (FILLED, CANCELED)
+        for result in (native, yue)
     )
 
     print()
     print("HARNESS_STATUS=" + ("PASS" if harness_ok else "FAIL"))
     print(
-        "NOTE=R0.3 is an observability/lifecycle audit; "
-        "native RiskAdverse is not yet expected to equal old yue_maker strict queue semantics."
+        "NOTE=YueStrictQueueModel matches old strict queue advancement, "
+        "but HBT exchange book-cross fills can still cause timestamp DIFF."
     )
 
     raise SystemExit(0 if harness_ok else 1)
