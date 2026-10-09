@@ -7,8 +7,10 @@ local_submit + TTL reaches the exchange after entry_latency. Response
 latency affects observations, not when an exchange-side fill occurs.
 
 Post-only reject smoke uses deliberately marketable quotes at zero latency,
-not representative maker-alpha sampling. All results use HBT's corrected
-exchange clock; this is not legacy yue_maker recv_wall_ns replay parity.
+not representative maker-alpha sampling. Exact timestamp ties follow the
+source engine EventSet ordering, with EXCH feed processed before EXCH orders.
+All results use HBT's corrected exchange clock; this is not legacy
+yue_maker recv_wall_ns replay parity.
 
 Exit != 0 on any mismatch; preserve diagnostics in the terminal output.
 """
@@ -63,20 +65,29 @@ def build_reference(exch, quotes, entry_ns):
     cursor = 0
     rows = []
     missing_book = 0
+    entry_ties = 0
+    cancel_ties = 0
 
     for number, local_ts, side, px, bid, ask, deadline in quotes:
         entry_exch_ts = local_ts + entry_ns
         cancel_exch_ts = deadline + entry_ns
 
-        # All request timestamps retain the local sub-ms fraction. Explicit
-        # tie ordering is not claimed for requests exactly on a feed timestamp.
-        if entry_exch_ts % NS_PER_MS == 0 or cancel_exch_ts % NS_PER_MS == 0:
-            raise RuntimeError(
-                "Order timestamp is exactly on an exchange feed millisecond; "
-                "tie-order audit required"
-            )
-
+        # HBT EventSet breaks identical timestamps by event kind:
+        # LocalData -> LocalOrder -> ExchData -> ExchOrder.
+        # Consequently all exchange feed rows at entry_exch_ts are
+        # processed BEFORE the new order reaches the exchange; likewise,
+        # all exchange trades at cancel_exch_ts occur before cancel takes
+        # effect. Do not shift, discard, or fabricate timestamps.
+        #
+        # The "right" search excludes same-ts feed from future trade fills
+        # (already processed before order acceptance), while the reference
+        # trade loop includes same-ts feed up to cancel_exch_ts inclusive.
+        entry_left = int(np.searchsorted(exch_ts, entry_exch_ts, side="left"))
         end = int(np.searchsorted(exch_ts, entry_exch_ts, side="right"))
+        cancel_left = int(np.searchsorted(exch_ts, cancel_exch_ts, side="left"))
+        cancel_right = int(np.searchsorted(exch_ts, cancel_exch_ts, side="right"))
+        entry_ties += int(end > entry_left)
+        cancel_ties += int(cancel_right > cancel_left)
         while cursor < end:
             apply_depth(exch[cursor], bids, asks)
             cursor += 1
@@ -110,7 +121,7 @@ def build_reference(exch, quotes, entry_ns):
             )
         )
 
-    return rows, missing_book
+    return rows, missing_book, entry_ties, cancel_ties
 
 
 def make_hbt(npz, entry_ns, response_ns, tick, lot):
@@ -429,7 +440,14 @@ def main():
 
     for entry_ns in entry_values:
         response_ns = entry_ns
-        cases, skipped = build_reference(exch, quotes, entry_ns)
+        cases, skipped, entry_ties, cancel_ties = build_reference(
+            exch, quotes, entry_ns
+        )
+        print(
+            f"scenario_entry_ms={entry_ns / NS_PER_MS:.0f} "
+            f"exact_exchange_feed_ties_on_entry={entry_ties} "
+            f"exact_exchange_feed_ties_on_cancel_effective={cancel_ties}"
+        )
         if skipped:
             print(f"missing_exchange_book_skipped={skipped}")
         observed = run_scenario(
