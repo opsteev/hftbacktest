@@ -103,7 +103,7 @@ def raw_candidates(raw_path, symbol, interval_ns, ttl_ns, lower_wall, upper_wall
 
         if event == "aggTrade" and stream.endswith("@aggTrade"):
             n_trades += 1
-            if ts <= upper_wall + 5 * NS_PER_S:
+            if ts <= upper_wall + ttl_ns + NS_PER_S:
                 trades.append(
                     Trade(
                         ts, int(d["T"]) * NS_PER_MS,
