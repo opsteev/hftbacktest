@@ -253,7 +253,9 @@ def compare_tape(
         if old_fill and old_receipt is None:
             raise RuntimeError("legacy FILLED missing fill_wall_ns")
 
-        measures = {}
+        # Stable CSV schema: this optional paired timing measurement must
+        # exist even for orders not filled in BOTH execution models.
+        measures = {"old_minus_hbt_receipt_ms": None}
         for fill_source, active, anchor in (
             ("legacy", old_fill, old_receipt),
             ("hbt", hbt_fill, hbt_receipt),
@@ -431,8 +433,14 @@ def main():
         )
         total_missing += counts["hbt_no_raw_trade_at_fill_timestamp"]
         output_csv = out_root / f"r1_1_fill_quality_{strategy}.csv"
+        # Collect the union of fields across the tape, preserving the
+        # first-seen column order. Optional diagnostics may be populated
+        # only for some rows; never discard them or fail the CSV export.
+        columns = list(dict.fromkeys(
+            key for row in rows for key in row
+        ))
         with output_csv.open("w", newline="") as fh:
-            writer = csv.DictWriter(fh, fieldnames=list(rows[0]))
+            writer = csv.DictWriter(fh, fieldnames=columns)
             writer.writeheader()
             writer.writerows(rows)
         summary["strategies"][strategy] = {
